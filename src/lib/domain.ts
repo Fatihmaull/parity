@@ -12,6 +12,7 @@
 import type { Issuer, LegalStructure } from '@/config/universe';
 import { UNIVERSE } from '@/config/universe';
 import { premiumPct as computePremiumPct } from '@/lib/scaled';
+import { liquidityQualityScore } from '@/lib/screen/quality';
 import type { MintScaledConfig } from '@/lib/rpc/mintConfig';
 import type { JupiterPriceEntry, JupiterPriceMap } from '@/lib/jupiter/price';
 
@@ -76,6 +77,16 @@ export interface TokenRow {
   jupiterUsdPrice: number | null;
   jupiterUsdPricePrescaled: number | null;
   jupiterStockDataPrice: number | null;
+
+  /** DexScreener priceUsd if available (often raw / unscaled) */
+  dexPriceUsd: number | null;
+  /** Composite 0–100 liquidity/volume/holders score */
+  qualityScore: number;
+  /**
+   * Polymarket-implied months to IPO (joined on page load).
+   * Null when no market for this symbol.
+   */
+  impliedMonthsToIpo: number | null;
 }
 
 export interface PrestocksCatalogueItem {
@@ -123,6 +134,8 @@ export interface DexPairHint {
   mint: string;
   liquidityUsd: number | null;
   volume24hUsd: number | null;
+  /** DexScreener priceUsd — typically raw / unscaled; label carefully in UI */
+  priceUsd: number | null;
 }
 
 export interface NormalizeInput {
@@ -404,6 +417,13 @@ export function normalizeTokenRows(input: NormalizeInput): TokenRow[] {
       jupiterUsdPrice,
       jupiterUsdPricePrescaled,
       jupiterStockDataPrice: jupStock,
+      dexPriceUsd: dex?.priceUsd ?? null,
+      qualityScore: liquidityQualityScore({
+        liquidityUsd,
+        volume24hUsd,
+        holders,
+      }),
+      impliedMonthsToIpo: null,
     });
   }
 

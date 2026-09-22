@@ -1,12 +1,36 @@
+import { Suspense } from 'react';
 import { AnomalyCards } from '@/components/AnomalyCards';
 import { StaleBadge } from '@/components/StaleBadge';
-import { TerminalTable } from '@/components/TerminalTable';
+import { TerminalScreen } from '@/components/TerminalScreen';
 import { loadTokenBundle } from '@/lib/data/tokens';
+import { loadIpoLadders } from '@/lib/data/polymarket';
+import { impliedMonthsBySymbol } from '@/lib/screen/ipoJoin';
+import type { TokenRow } from '@/lib/domain';
 
 export const dynamic = 'force-dynamic';
 
+function enrichWithIpo(
+  rows: TokenRow[],
+  monthsBySymbol: Map<string, number | null>,
+): TokenRow[] {
+  return rows.map((r) => ({
+    ...r,
+    impliedMonthsToIpo: monthsBySymbol.has(r.symbol)
+      ? (monthsBySymbol.get(r.symbol) ?? null)
+      : null,
+  }));
+}
+
 export default async function Home() {
-  const bundle = await loadTokenBundle();
+  const [bundle, ipo] = await Promise.all([
+    loadTokenBundle(),
+    loadIpoLadders().catch(() => null),
+  ]);
+
+  const months = ipo
+    ? impliedMonthsBySymbol(ipo)
+    : new Map<string, number | null>();
+  const rows = enrichWithIpo(bundle.rows, months);
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-8 px-4 py-6">
@@ -20,6 +44,8 @@ export default async function Home() {
             (display price − mark) / mark × 100 — invariant under Display⇄Raw.
             Green / red only for premium. Holders from PreStocks{' '}
             <code className="text-[var(--foreground)]">/api/metrics</code>.
+            Screener presets, watchlist, quality score, IPO months, and expand
+            rows for convention / cross-venue checks.
           </p>
         </div>
         <StaleBadge
@@ -35,18 +61,27 @@ export default async function Home() {
         </p>
       ) : null}
 
-      {bundle.rows.length === 0 ? (
+      {rows.length === 0 ? (
         <p className="text-sm text-[var(--muted)]">
           No token rows. Run <code>npm run snapshot</code> or unset
           SNAPSHOT_ONLY.
         </p>
       ) : (
-        <div className="rounded border border-[var(--border)] bg-[var(--panel)]">
-          <TerminalTable rows={bundle.rows} />
-        </div>
+        <Suspense
+          fallback={
+            <p className="font-mono text-xs text-[var(--muted)]">
+              Loading screener…
+            </p>
+          }
+        >
+          <TerminalScreen
+            rows={rows}
+            meta={{ asOf: bundle.asOf, stale: bundle.stale }}
+          />
+        </Suspense>
       )}
 
-      <AnomalyCards rows={bundle.rows} />
+      <AnomalyCards rows={rows} />
 
       <p className="font-mono text-[10px] text-[var(--muted)]">
         Economic exposure via Reg S SPV structures — not ownership. See{' '}

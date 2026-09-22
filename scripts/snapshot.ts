@@ -16,6 +16,7 @@ import {
   fetchAllMintScaledConfigs,
   getRpcUrl,
 } from '../src/lib/rpc/mintConfig';
+import { captureShadowSnapshot } from '../src/lib/data/shadow';
 
 async function safe<T>(
   label: string,
@@ -81,6 +82,12 @@ async function main() {
 
   console.log(`Wrote ${outPath}`);
   console.log(`Wrote ${latestPath}`);
+
+  const shadow = await safe('prestocks/mark-price/batch (shadow)', captureShadowSnapshot);
+  if (shadow.ok) {
+    console.log('Wrote src/data/snapshot/shadow/latest.json');
+  }
+
   console.log(
     JSON.stringify(
       {
@@ -89,6 +96,7 @@ async function main() {
         stats: stats.ok,
         jupiter: jupiter.ok,
         mintConfigs: mintConfigs.ok,
+        shadow: shadow.ok,
       },
       null,
       2,

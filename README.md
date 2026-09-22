@@ -27,7 +27,9 @@ Optional checks: `npm test`, `npm run print-multipliers`, `npm run assert-prices
 
 | Path | Purpose |
 |------|---------|
-| `/` | Terminal table — all PreStocks, sorted by `|premium|` |
+| `/` | Terminal — screener presets, watchlist, quality, IPO months, expand for convention/venue |
+| `/splits` | ScaledUiAmount multiplier timeline (SPACEX ×5, OPENAI ≈1.486) |
+| `/shadow` | Untokenized names with PreStocks marks (`/api/mark-price/batch`) |
 | `/history` | Cumulative / daily volume + weekly holders (`/api/stats`) |
 | `/portfolio` | Address paste → PreStocks holdings + crossed comparison |
 | `/convention` | 2×2 Convention Check (default SPACEX) |

@@ -1,6 +1,7 @@
 /**
- * Optional DexScreener liquidity / 24h volume hints.
+ * Optional DexScreener liquidity / 24h volume / priceUsd hints.
  * Failures are soft — UI falls back to Jupiter liquidity + PreStocks stats.
+ * priceUsd is labeled in UI as likely raw / unscaled.
  */
 
 import { UNIVERSE_MINTS } from '@/config/universe';
@@ -9,6 +10,7 @@ import type { DexPairHint } from '@/lib/domain';
 const DEX_BASE = 'https://api.dexscreener.com/latest/dex/tokens';
 
 interface DexPair {
+  priceUsd?: string | number;
   liquidity?: { usd?: number };
   volume?: { h24?: number };
   chainId?: string;
@@ -18,11 +20,52 @@ interface DexResponse {
   pairs?: DexPair[] | null;
 }
 
+function num(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function hintFromPairs(mint: string, pairs: DexPair[]): DexPairHint {
+  let liq = 0;
+  let vol = 0;
+  let hasLiq = false;
+  let hasVol = false;
+  let bestPrice: number | null = null;
+  let bestLiqForPrice = -1;
+  for (const p of pairs) {
+    if (p.chainId && p.chainId !== 'solana') continue;
+    const l = p.liquidity?.usd;
+    const v = p.volume?.h24;
+    if (typeof l === 'number' && Number.isFinite(l)) {
+      liq += l;
+      hasLiq = true;
+      const px = num(p.priceUsd);
+      if (px != null && l >= bestLiqForPrice) {
+        bestLiqForPrice = l;
+        bestPrice = px;
+      }
+    }
+    if (typeof v === 'number' && Number.isFinite(v)) {
+      vol += v;
+      hasVol = true;
+    }
+  }
+  return {
+    mint,
+    liquidityUsd: hasLiq ? liq : null,
+    volume24hUsd: hasVol ? vol : null,
+    priceUsd: bestPrice,
+  };
+}
+
 export async function fetchDexScreenerForMints(
   mints: readonly string[] = UNIVERSE_MINTS,
 ): Promise<Map<string, DexPairHint>> {
   const out = new Map<string, DexPairHint>();
-  // Batch in chunks of 5 to avoid URL length / rate limits
   const chunkSize = 5;
   for (let i = 0; i < mints.length; i += chunkSize) {
     const chunk = mints.slice(i, i + chunkSize);
@@ -35,37 +78,11 @@ export async function fetchDexScreenerForMints(
         },
         cache: 'no-store',
       });
-      if (!res.ok) continue;
+      if (!res.ok) continue; // incl. 429
       const body = (await res.json()) as DexResponse;
       const pairs = body.pairs ?? [];
-      // Group by mint appearing in pair — Dex returns baseToken.address
-      // We don't have mint on each pair cleanly when batching; match by querying
-      // individually is safer. For batch response, sum solana pairs per call.
-      // When single mint in URL, all pairs belong to that mint.
       if (chunk.length === 1) {
-        const mint = chunk[0]!;
-        let liq = 0;
-        let vol = 0;
-        let hasLiq = false;
-        let hasVol = false;
-        for (const p of pairs) {
-          if (p.chainId && p.chainId !== 'solana') continue;
-          const l = p.liquidity?.usd;
-          const v = p.volume?.h24;
-          if (typeof l === 'number' && Number.isFinite(l)) {
-            liq += l;
-            hasLiq = true;
-          }
-          if (typeof v === 'number' && Number.isFinite(v)) {
-            vol += v;
-            hasVol = true;
-          }
-        }
-        out.set(mint, {
-          mint,
-          liquidityUsd: hasLiq ? liq : null,
-          volume24hUsd: hasVol ? vol : null,
-        });
+        out.set(chunk[0]!, hintFromPairs(chunk[0]!, pairs));
       }
     } catch {
       // soft fail
@@ -74,7 +91,7 @@ export async function fetchDexScreenerForMints(
   return out;
 }
 
-/** One-mint-at-a-time fetch (more reliable mapping). */
+/** One-mint-at-a-time fetch (more reliable mapping). Graceful on 429. */
 export async function fetchDexScreenerHints(
   mints: readonly string[] = UNIVERSE_MINTS,
 ): Promise<Map<string, DexPairHint>> {
@@ -89,30 +106,9 @@ export async function fetchDexScreenerHints(
           },
           cache: 'no-store',
         });
-        if (!res.ok) return;
+        if (!res.ok) return; // soft — incl. 429
         const body = (await res.json()) as DexResponse;
-        let liq = 0;
-        let vol = 0;
-        let hasLiq = false;
-        let hasVol = false;
-        for (const p of body.pairs ?? []) {
-          if (p.chainId && p.chainId !== 'solana') continue;
-          const l = p.liquidity?.usd;
-          const v = p.volume?.h24;
-          if (typeof l === 'number' && Number.isFinite(l)) {
-            liq += l;
-            hasLiq = true;
-          }
-          if (typeof v === 'number' && Number.isFinite(v)) {
-            vol += v;
-            hasVol = true;
-          }
-        }
-        out.set(mint, {
-          mint,
-          liquidityUsd: hasLiq ? liq : null,
-          volume24hUsd: hasVol ? vol : null,
-        });
+        out.set(mint, hintFromPairs(mint, body.pairs ?? []));
       } catch {
         // soft
       }
