@@ -6,6 +6,8 @@ import { useConvention } from '@/components/ConventionContext';
 
 const LINKS = [
   { href: '/', label: 'Terminal' },
+  { href: '/history', label: 'History' },
+  { href: '/portfolio', label: 'Portfolio' },
   { href: '/convention', label: 'Convention Check' },
   { href: '/ipo', label: 'IPO' },
   { href: '/disclosures', label: 'Disclosures' },

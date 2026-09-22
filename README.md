@@ -1,65 +1,63 @@
 # PARITY
 
-Read-only PreStocks analytics for Solana STOCKLANA — Day 1 correctness core + Day 2 terminal UI (premium table, Convention Check, IPO ladders, disclosures).
+**SPACEX effectiveMultiplier = 5** (document split/scale). On-chain `multiplier=1`, `newMultiplier=5`, effective since `2026-06-10`; Jupiter `usdPrice × 5 == usdPricePrescaled` (relErr 0). See [FINDINGS.md](./FINDINGS.md).
 
-**Bounty scope: PreStocks-only.** No Tessera tokens (`tOpenAI`, `tKalshi`, `tSpaceX`, …). No wallet / swap / auth / Anchor.
+Read-only PreStocks analytics for Solana STOCKLANA — ScaledUiAmount-aware premiums, convention check, history, portfolio lookup.
 
-**SPACEX hook:** if on-chain `effectiveMultiplier === 5`, document the split/scale in `FINDINGS.md` (see `npm run assert-prices`).
+- **Terminal** — all PreStocks sorted by `|premium|`; display⇄raw toggle never changes premium %
+- **History** — cumulative + daily (differenced) volume and weekly holders from PreStocks `/api/stats`
+- **Portfolio** — paste any Solana address; value Token-2022 holdings correctly (uiAmount × usdPrice) and show the crossed-convention bug
 
-## Stack
-
-- Next.js App Router (`src/`), TypeScript strict, Tailwind, Node runtime only
-- `@solana/web3.js` + `@solana/spl-token` for Token-2022 ScaledUiAmount
-- Vitest for conversion math
+**Bounty scope: PreStocks-only.** Tessera tokens (`tOpenAI`, `tKalshi`, `tSpaceX`, …) are **excluded for eligibility**. No wallet adapter / swap / auth / Anchor.
 
 ## Setup
 
 ```bash
 cp .env.example .env.local   # optional HELIUS_RPC_URL
-npm install
-npm test
-npm run print-multipliers
-npm run assert-prices
-npm run snapshot
+npm i
+npm run snapshot             # PreStocks + Jupiter + mint configs → src/data/snapshot/
 npm run dev
 ```
 
-## Scripts
+Optional checks: `npm test`, `npm run print-multipliers`, `npm run assert-prices`.
 
-| Script | Purpose |
-|--------|---------|
-| `dev` / `build` | Next.js |
-| `test` | Vitest unit tests (`src/lib/scaled.test.ts`) |
-| `print-multipliers` | RPC table: symbol, decimals, multipliers |
-| `assert-prices` | Jupiter v3 convention assert → `FINDINGS.md` |
-| `snapshot` | PreStocks + Jupiter + mint configs → `src/data/snapshot/` |
+`SNAPSHOT_ONLY=true` serves Terminal / History / Convention / IPO from snapshot (no live fetches). Portfolio always needs live RPC.
 
 ## Routes
 
 | Path | Purpose |
 |------|---------|
-| `/` | Terminal table — all PreStocks, sorted by \|premium\| |
+| `/` | Terminal table — all PreStocks, sorted by `|premium|` |
+| `/history` | Cumulative / daily volume + weekly holders (`/api/stats`) |
+| `/portfolio` | Address paste → PreStocks holdings + crossed comparison |
 | `/convention` | 2×2 Convention Check (default SPACEX) |
 | `/ipo` | Polymarket IPO probability ladders |
 | `/disclosures` | Legal framing / May 2026 SPV statements |
 
-## Correctness rules
+## Architecture
 
-- RPC `uiAmount` **already includes** the multiplier — never double-apply.
-- `nowSec >= newMultiplierEffectiveTimestamp` → use `newMultiplier`.
-- Jupiter: `usdPrice` pairs with scaled amounts; `usdPricePrescaled` with raw/`10^decimals`.
+- Next.js App Router (`src/`), TypeScript strict, Tailwind, **Node runtime only**
+- Data: PreStocks catalogue / metrics / stats → normalize → `TokenRow[]`
+- Prices: Jupiter Price v3 (`usdPrice`, `usdPricePrescaled`)
+- Multipliers: on-chain Token-2022 `getScaledUiAmountConfig` (`>=` timestamp rule)
+- Charts: recharts 3.x · Portfolio: `getParsedTokenAccountsByOwner` (Token-2022)
+- Offline path: `tryLiveThenSnapshot` + `npm run snapshot`
 
-## Pinned / installed versions
+## Correctness (brief)
 
-```
-{
-  "next": "16.3.5",
-  "react": "19.2.8",
-  "typescript": "5.9.3",
-  "tailwindcss": "4.3.3",
-  "@solana/web3.js": "1.99.0",
-  "@solana/spl-token": "0.4.15",
-  "vitest": "3.2.4",
-  "zod": "4.6.5"
-}
-```
+- RPC `uiAmount` **already includes** the multiplier — never double-apply
+- `nowSec >= newMultiplierEffectiveTimestamp` → use `newMultiplier`
+- Jupiter: `usdPrice` ↔ scaled amounts; `usdPricePrescaled` ↔ raw / 10^decimals
+- Premium % always from display price vs mark (convention-invariant)
+- Never mix `/api/stats` holders with `/api/metrics` holderCount in one chart
+
+## Honest limitations
+
+- DexScreener may 429 — volume falls back to PreStocks stats deltas
+- Public Solana RPC is rate-limited; set `HELIUS_RPC_URL` for portfolio reliability
+- No Tessera coverage (bounty eligibility)
+- Portfolio cannot use snapshot for arbitrary wallets — live RPC required
+
+## Stack pins
+
+See `package.json` — Next 16 / React 19 / recharts 3 / `@solana/web3.js` 1.99 / vitest.
