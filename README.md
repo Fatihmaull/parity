@@ -1,6 +1,6 @@
 # PARITY
 
-Read-only PreStocks analytics for Solana STOCKLANA — Day 1 correctness core (ScaledUiAmount multipliers + Jupiter price conventions).
+Read-only PreStocks analytics for Solana STOCKLANA — Day 1 correctness core + Day 2 terminal UI (premium table, Convention Check, IPO ladders, disclosures).
 
 **Bounty scope: PreStocks-only.** No Tessera tokens (`tOpenAI`, `tKalshi`, `tSpaceX`, …). No wallet / swap / auth / Anchor.
 
@@ -33,6 +33,15 @@ npm run dev
 | `print-multipliers` | RPC table: symbol, decimals, multipliers |
 | `assert-prices` | Jupiter v3 convention assert → `FINDINGS.md` |
 | `snapshot` | PreStocks + Jupiter + mint configs → `src/data/snapshot/` |
+
+## Routes
+
+| Path | Purpose |
+|------|---------|
+| `/` | Terminal table — all PreStocks, sorted by \|premium\| |
+| `/convention` | 2×2 Convention Check (default SPACEX) |
+| `/ipo` | Polymarket IPO probability ladders |
+| `/disclosures` | Legal framing / May 2026 SPV statements |
 
 ## Correctness rules
 

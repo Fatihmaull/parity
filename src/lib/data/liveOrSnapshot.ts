@@ -1,10 +1,11 @@
 /**
- * try-live-then-snapshot pattern stubs.
+ * try-live-then-snapshot pattern.
  * Live fetch first; on failure / SNAPSHOT_ONLY=true, fall back to latest snapshot JSON.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { access, readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { constants as fsConstants } from 'node:fs';
 
 export function snapshotOnly(): boolean {
   return process.env.SNAPSHOT_ONLY === 'true';
@@ -18,7 +19,11 @@ export async function listSnapshots(): Promise<string[]> {
   try {
     const files = await readdir(snapshotDir());
     return files
-      .filter((f) => f.endsWith('.json'))
+      .filter(
+        (f) =>
+          f.endsWith('.json') &&
+          (f === 'latest.json' || f.startsWith('snapshot-')),
+      )
       .sort()
       .reverse();
   } catch {
@@ -30,9 +35,20 @@ export async function loadLatestSnapshot<T = unknown>(): Promise<{
   file: string;
   data: T;
 } | null> {
+  // Prefer explicit latest.json pointer when present
+  const latestPath = path.join(snapshotDir(), 'latest.json');
+  try {
+    await access(latestPath, fsConstants.R_OK);
+    const raw = await readFile(latestPath, 'utf8');
+    return { file: 'latest.json', data: JSON.parse(raw) as T };
+  } catch {
+    // fall through to dated snapshots
+  }
+
   const files = await listSnapshots();
-  if (files.length === 0) return null;
-  const file = files[0]!;
+  const dated = files.filter((f) => f.startsWith('snapshot-'));
+  if (dated.length === 0) return null;
+  const file = dated[0]!;
   const raw = await readFile(path.join(snapshotDir(), file), 'utf8');
   return { file, data: JSON.parse(raw) as T };
 }
