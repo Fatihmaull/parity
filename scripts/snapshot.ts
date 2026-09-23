@@ -7,9 +7,9 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { UNIVERSE } from '../src/config/universe';
 import {
-  fetchPrestocksCatalogue,
-  fetchPrestocksMetrics,
-  fetchPrestocksStats,
+  fetchPrestocksCatalogueOrThrow,
+  fetchPrestocksMetricsOrThrow,
+  fetchPrestocksStatsOrThrow,
 } from '../src/lib/data/prestocks';
 import { fetchJupiterPrices } from '../src/lib/jupiter/price';
 import {
@@ -42,9 +42,9 @@ async function main() {
   console.log(`Snapshot starting ${iso}`);
 
   const [catalogue, metrics, stats, jupiter, mintConfigs] = await Promise.all([
-    safe('prestocks/catalogue', fetchPrestocksCatalogue),
-    safe('prestocks/metrics', fetchPrestocksMetrics),
-    safe('prestocks/stats', fetchPrestocksStats),
+    safe('prestocks/catalogue', fetchPrestocksCatalogueOrThrow),
+    safe('prestocks/metrics', fetchPrestocksMetricsOrThrow),
+    safe('prestocks/stats', fetchPrestocksStatsOrThrow),
     safe('jupiter/price/v3', async () => {
       const r = await fetchJupiterPrices();
       if (!r.ok) throw new Error(r.error ?? `HTTP ${r.status}`);

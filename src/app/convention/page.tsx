@@ -23,10 +23,18 @@ export default async function ConventionPage() {
         </div>
         <StaleBadge
           stale={bundle.stale}
+          partialStale={bundle.partialStale}
           asOf={bundle.asOf}
           snapshotFile={bundle.snapshotFile}
+          warnings={bundle.warnings}
         />
       </div>
+
+      {bundle.partialStale && bundle.warnings?.length ? (
+        <p className="font-mono text-[11px] text-[var(--accent)]">
+          {bundle.warnings.join(' · ')}
+        </p>
+      ) : null}
 
       <ConventionCheck rows={bundle.rows} />
     </main>

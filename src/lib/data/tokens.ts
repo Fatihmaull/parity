@@ -1,6 +1,9 @@
 /**
  * Assemble TokenRow[] from PreStocks + Jupiter + RPC (+ optional DexScreener).
- * Prefer live; SNAPSHOT_ONLY / failure → src/data/snapshot/latest.json.
+ * Prefer live; SNAPSHOT_ONLY / total failure → src/data/snapshot/latest.json.
+ *
+ * Partial PreStocks failures (e.g. metrics 429) fill THAT piece from snapshot
+ * and set partialStale + warnings — not full stale snapshot mode.
  */
 
 import { UNIVERSE_MINTS } from '@/config/universe';
@@ -46,7 +49,11 @@ export interface SnapshotPayload {
 export interface TokenBundle {
   source: 'live' | 'snapshot' | 'none';
   asOf: string | null;
+  /** True only for full snapshot fallback or SNAPSHOT_ONLY. */
   stale: boolean;
+  /** Live primary data, but one+ secondary sources came from snapshot. */
+  partialStale?: boolean;
+  warnings?: string[];
   snapshotFile?: string;
   error?: string;
   rows: TokenRow[];
@@ -89,11 +96,28 @@ function dexMapFromSnapshot(
   return new Map(Object.entries(by));
 }
 
-async function liveAssemble(): Promise<{
+type LiveAssembleResult = {
   rows: TokenRow[];
   asOf: string;
-} | null> {
-  const [catalogue, metrics, stats, jupiter, mintRes] = await Promise.all([
+  partialStale: boolean;
+  warnings: string[];
+};
+
+/**
+ * Fetch sources independently. Soft-failed PreStocks pieces are filled from
+ * the latest snapshot for that piece only. Prefer live Jupiter + RPC.
+ */
+async function liveAssemble(): Promise<LiveAssembleResult | null> {
+  const warnings: string[] = [];
+  let snapCached: { file: string; data: SnapshotPayload } | null | undefined;
+
+  async function snap(): Promise<{ file: string; data: SnapshotPayload } | null> {
+    if (snapCached !== undefined) return snapCached;
+    snapCached = await loadLatestSnapshot<SnapshotPayload>();
+    return snapCached;
+  }
+
+  const [catRes, metRes, statsRes, jupiter, mintRes] = await Promise.all([
     fetchPrestocksCatalogue(),
     fetchPrestocksMetrics(),
     fetchPrestocksStats(),
@@ -101,33 +125,128 @@ async function liveAssemble(): Promise<{
     fetchAllMintScaledConfigs(UNIVERSE_MINTS),
   ]);
 
-  if (!jupiter.ok && Object.keys(jupiter.prices).length === 0) {
-    // still proceed if we have prestocks; prices may be sparse
+  let catalogue = catRes.ok ? asCatalogue(catRes.data) : null;
+  let metrics = metRes.ok ? asMetrics(metRes.data) : null;
+  let stats = statsRes.ok ? asStats(statsRes.data) : null;
+  let usedSnapshotPiece = false;
+
+  if (!catRes.ok) {
+    const s = await snap();
+    const fromSnap = asCatalogue(s?.data.prestocks?.catalogue);
+    if (fromSnap) {
+      catalogue = fromSnap;
+      usedSnapshotPiece = true;
+      warnings.push(`Catalogue from snapshot — ${catRes.error}`);
+    } else {
+      warnings.push(catRes.error);
+    }
+  }
+
+  if (!metRes.ok) {
+    const s = await snap();
+    const fromSnap = asMetrics(s?.data.prestocks?.metrics);
+    if (fromSnap) {
+      metrics = fromSnap;
+      usedSnapshotPiece = true;
+      warnings.push(`Metrics from snapshot — ${metRes.error}`);
+    } else {
+      warnings.push(metRes.error);
+    }
+  }
+
+  if (!statsRes.ok) {
+    const s = await snap();
+    const fromSnap = asStats(s?.data.prestocks?.stats);
+    if (fromSnap) {
+      stats = fromSnap;
+      usedSnapshotPiece = true;
+      warnings.push(`Stats from snapshot — ${statsRes.error}`);
+    } else {
+      warnings.push(statsRes.error);
+    }
+  }
+
+  let jupiterPrices = jupiter.prices ?? {};
+  if (!jupiter.ok && Object.keys(jupiterPrices).length === 0) {
+    const s = await snap();
+    const snapPrices = s?.data.jupiter?.prices;
+    if (snapPrices && Object.keys(snapPrices).length > 0) {
+      jupiterPrices = snapPrices;
+      usedSnapshotPiece = true;
+      warnings.push(
+        `Jupiter from snapshot — ${jupiter.error ?? `HTTP ${jupiter.status}`}`,
+      );
+    } else if (jupiter.error) {
+      warnings.push(jupiter.error);
+    }
+  } else if (jupiter.rateLimited) {
+    warnings.push(jupiter.error ?? 'Jupiter rate limit exceeded (429)');
+  }
+
+  const mintConfigs = new Map<string, MintScaledConfig>();
+  for (const c of mintRes.ok) mintConfigs.set(c.mint, c);
+  if (mintConfigs.size === 0) {
+    const s = await snap();
+    const fromSnap = mintMapFromSnapshot(s?.data ?? {});
+    if (fromSnap.size > 0) {
+      for (const [k, v] of fromSnap) mintConfigs.set(k, v);
+      usedSnapshotPiece = true;
+      warnings.push('Mint configs from snapshot — live RPC empty/failed');
+    }
   }
 
   let dexByMint: Map<string, DexPairHint> | undefined;
   try {
     dexByMint = await fetchDexScreenerHints(UNIVERSE_MINTS);
-    if (dexByMint.size === 0) dexByMint = undefined;
+    if (dexByMint.size === 0) {
+      const s = await snap();
+      const fromSnap = dexMapFromSnapshot(s?.data ?? {});
+      if (fromSnap && fromSnap.size > 0) {
+        dexByMint = fromSnap;
+        usedSnapshotPiece = true;
+        warnings.push('DexScreener from snapshot — live empty/429');
+      } else {
+        dexByMint = undefined;
+      }
+    }
   } catch {
-    dexByMint = undefined;
+    const s = await snap();
+    const fromSnap = dexMapFromSnapshot(s?.data ?? {});
+    if (fromSnap && fromSnap.size > 0) {
+      dexByMint = fromSnap;
+      usedSnapshotPiece = true;
+      warnings.push('DexScreener from snapshot — live fetch failed');
+    } else {
+      dexByMint = undefined;
+    }
   }
 
-  const mintConfigs = new Map<string, MintScaledConfig>();
-  for (const c of mintRes.ok) mintConfigs.set(c.mint, c);
+  const hasCatalogue = catalogue != null && catalogue.length > 0;
+  const hasJupiter = Object.keys(jupiterPrices).length > 0;
+  // Usable if we have catalogue and/or jupiter prices (UNIVERSE still yields rows).
+  if (!hasCatalogue && !hasJupiter) {
+    return null;
+  }
 
   const rows = normalizeTokenRows({
     prestocks: {
-      catalogue: asCatalogue(catalogue),
-      metrics: asMetrics(metrics),
-      stats: asStats(stats),
+      catalogue,
+      metrics,
+      stats,
     },
-    jupiterPrices: jupiter.prices ?? {},
+    jupiterPrices,
     mintConfigs,
     dexByMint,
   });
 
-  return { rows, asOf: new Date().toISOString() };
+  if (rows.length === 0) return null;
+
+  return {
+    rows,
+    asOf: new Date().toISOString(),
+    partialStale: usedSnapshotPiece,
+    warnings,
+  };
 }
 
 function fromSnapshot(
@@ -187,14 +306,24 @@ export async function loadTokenBundle(): Promise<TokenBundle> {
   }
 
   const result = await tryLiveThenSnapshot<
-    { rows: TokenRow[]; asOf: string; snapshotFile?: string },
+    LiveAssembleResult & { snapshotFile?: string },
     SnapshotPayload
   >({
     live: async () => {
       const live = await liveAssemble();
       return live;
     },
-    fromSnapshot: (snap, file) => fromSnapshot(snap, file),
+    fromSnapshot: (snap, file) => {
+      const parsed = fromSnapshot(snap, file);
+      if (!parsed) return null;
+      return {
+        rows: parsed.rows,
+        asOf: parsed.asOf,
+        snapshotFile: parsed.snapshotFile,
+        partialStale: false,
+        warnings: [],
+      };
+    },
   });
 
   if (!result.data) {
@@ -208,12 +337,20 @@ export async function loadTokenBundle(): Promise<TokenBundle> {
     };
   }
 
+  const isFullSnapshot = result.source === 'snapshot';
+  const warnings = result.data.warnings ?? [];
+  const errorParts: string[] = [];
+  if (result.error) errorParts.push(result.error);
+  if (warnings.length) errorParts.push(...warnings);
+
   return {
     source: result.source,
     asOf: result.data.asOf,
-    stale: result.source === 'snapshot',
+    stale: isFullSnapshot,
+    partialStale: !isFullSnapshot && Boolean(result.data.partialStale),
+    warnings: warnings.length ? warnings : undefined,
     snapshotFile: result.snapshotFile ?? result.data.snapshotFile,
-    error: result.error,
+    error: errorParts.length ? errorParts.join('; ') : undefined,
     rows: result.data.rows,
   };
 }

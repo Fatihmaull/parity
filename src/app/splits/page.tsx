@@ -50,14 +50,21 @@ export default async function SplitsPage() {
         </div>
         <StaleBadge
           stale={bundle.stale}
+          partialStale={bundle.partialStale}
           asOf={bundle.asOf}
           snapshotFile={bundle.snapshotFile}
+          warnings={bundle.warnings}
         />
       </div>
 
-      {bundle.error && bundle.source !== 'live' ? (
+      {bundle.stale && bundle.error ? (
         <p className="font-mono text-[11px] text-[var(--warn)]">
           {bundle.error}
+        </p>
+      ) : null}
+      {bundle.partialStale && bundle.warnings?.length ? (
+        <p className="font-mono text-[11px] text-[var(--accent)]">
+          {bundle.warnings.join(' · ')}
         </p>
       ) : null}
 

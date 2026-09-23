@@ -52,8 +52,9 @@ export async function loadStatsHistory(): Promise<StatsHistoryBundle> {
   >({
     live: async () => {
       const raw = await fetchPrestocksStats();
+      if (!raw.ok) throw new Error(raw.error);
       return {
-        stats: asStats(raw),
+        stats: asStats(raw.data),
         asOf: new Date().toISOString(),
       };
     },

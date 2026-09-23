@@ -52,8 +52,8 @@ export async function fetchJupiterPrices(
   try {
     const res = await fetch(url, {
       headers: { Accept: 'application/json' },
-      // Node runtime — never edge
-      cache: 'no-store',
+      // Short cache — softens burst 429s; keep rate-limit handling below
+      next: { revalidate: 60 },
     });
 
     if (res.status === 429) {
